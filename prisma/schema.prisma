@@ -1,0 +1,169 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. ORGANISATIONS (Multi-tenant : chaque entreprise a son espace isolé)
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  taxId     String?  // Ex: N° Impôt / RCCM / KRA PIN
+  address   String?
+  logoUrl   String?  // Logo de l'entreprise pour les documents PDF
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships    Membership[]
+  clients        Client[]
+  products       Product[]
+  invoices       Invoice[]
+  deliveries     Delivery[]
+  suppliers      Supplier[]      // 👈 Ajout de la relation inverse
+  purchaseOrders PurchaseOrder[] // 👈 Ajout de la relation inverse
+}
+
+// 2. UTILISATEURS
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String   // Stockera le mot de passe haché pour notre auth maison
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+}
+
+// 3. RÔLES & APPARTENANCE
+model Membership {
+  id             String   @id @default(cuid())
+  role           String   @default("MEMBER") // OWNER, ADMIN, MEMBER
+  userId         String
+  organizationId String
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+}
+
+// 4. MODULE CRM / CLIENTS
+model Client {
+  id             String       @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  address        String?
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  deliveries     Delivery[]
+  createdAt      DateTime     @default(now())
+}
+
+// 5. MODULE CATALOGUE / PRODUITS
+model Product {
+  id             String        @id @default(cuid())
+  name           String
+  description    String?
+  price          Decimal       @db.Decimal(10, 2)
+  currency       String        @default("USD") // USD, KES, CDF
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceItems   InvoiceItem[]
+  createdAt      DateTime      @default(now())
+}
+
+// 6. MODULE FACTURATION & DEVIS
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String
+  status        String        @default("DRAFT") // DRAFT, CONFIRMED, SENT, PAID, CANCELLED
+  currency      String        @default("USD")     // USD, KES, CDF
+  totalAmount   Decimal       @db.Decimal(12, 2)
+  dueDate       DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  clientId       String
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  items          InvoiceItem[]
+  deliveries     Delivery[]
+}
+
+// 7. LIGNES DE FACTURE (Détails des articles)
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  description String
+  quantity    Float    @default(1)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  total       Decimal  @db.Decimal(12, 2)
+
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id])
+}
+
+// 8. MODULE LOGISTIQUE & BONS DE LIVRAISON
+model Delivery {
+  id             String       @id @default(cuid())
+  deliveryNumber String
+  status         String       @default("PREPARING") // PREPARING, IN_TRANSIT, DELIVERED
+  carrier        String?      // Transporteur / Chauffeur / Plaque véhicule
+  destination    String?      // Lieu de livraison (ex: Goma, Bukavu, Nairobi...)
+  notes          String?
+  
+  invoiceId      String?
+  invoice        Invoice?     @relation(fields: [invoiceId], references: [id])
+  
+  clientId       String
+  client         Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// 9. MODULE ACHATS / FOURNISSEURS
+model Supplier {
+  id             String          @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  address        String?
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+  createdAt      DateTime        @default(now())
+}
+
+model PurchaseOrder {
+  id             String       @id @default(cuid())
+  poNumber       String       // Ex: PO-1001
+  status         String       @default("DRAFT") // DRAFT, SENT, RECEIVED, CANCELLED
+  currency       String       @default("USD")
+  totalAmount    Decimal      @db.Decimal(12, 2)
+  notes          String?
+  
+  supplierId     String
+  supplier       Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
